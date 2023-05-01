@@ -12,9 +12,18 @@
   "activationEvents": [],
   "main": "./extension.js",
   "contributes": {
+    "menus": {
+      "editor/context": [
+        {
+          "command": "nofu.machinify",
+          "group": "navigation",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
     "commands": [{
       "command": "nofu.machinify",
-      "title": "Machinify"
+      "title": "Destruct"
     }]
   },
   "scripts": {

@@ -3,11 +3,15 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const { symbolName } = require('typescript');
+const { get } = require('http');
+const { workerData } = require('worker_threads');
+const { workspace } = require('vscode');
 
 const struct_source_map = new Map();
 const typedef_struct_map = new Map();
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+const statusBarItem =  vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+var init = false;
+var tmpFile = "";
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -15,37 +19,70 @@ const typedef_struct_map = new Map();
 function activate(context) {
 	console.log('nofu - activate() entered');
 
-	// suck in everything up to 5 levels deep
-	vscode.workspace.findFiles('**/**/**/**/**/**').then((res) => {
-		console.log("Find files callback entered");
-		let uri;
-		for (let i = 0; i < res.length; i++)
-			parse_source_file(res[i].fsPath);
-	});
-
+	statusBarItem.text = "Destruct : parsing source files $(sync~spin)";
+	statusBarItem.show();
+	
 	let disposable = vscode.commands.registerCommand('nofu.machinify', function () {
-		let text, range;
+		if (!init) {
+			// could use workspace.findFiles but want blocking here...
+			let toParse = getWorkspaceFiles(/.*\.(c|h|cc|cpp)$/);
+			console.log("Find files begin");
+			
+			for (let i = 0; i < toParse.length; i++) {
+				parse_source_file(toParse[i]);
+			}
+			console.log("Find files complete");
+			statusBarItem.hide();
+			tmpFile = workspace.workspaceFolders[0].uri.fsPath + "\\last_destruct.txt";
+			init = true;
+		}
+		let text;
 		if (vscode.window.activeTextEditor.selection.isEmpty)
 		{
-			text = vscode.window.activeTextEditor.document.getText();
-			range = new vscode.Range(vscode.window.activeTextEditor.document.positionAt(0), vscode.window.activeTextEditor.document.positionAt(text.length));
+			return;
 		}
 		else
 		{
 			text = vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection);
-			range = vscode.window.activeTextEditor.selection;
 		}
-		//console.log(destructify_external(text));
-		let replacified = text.replaceAll("Hello", "nofu");
-		vscode.window.activeTextEditor.edit(function (editBuilder) {
-		    editBuilder.replace(range, replacified)
-		})
+
+		if (!(struct_source_map.has(get_root_symbol(text).sym))) {
+			vscode.window.showInformationMessage(text + " was not found as a struct definition during parsing. Know it's a struct? Please submit a bug (TODO repo)");
+			return;
+		}
+		
+		console.log(destructify_external(text, ""));
+		let destructed = text + " destructed\n\n";
+		destructed += destructify_external(text, "");
+		fs.writeFileSync(tmpFile, destructed);
+
+		vscode.window.showTextDocument(vscode.Uri.file(tmpFile));
+
 		console.log("nofu.Machinify end");
 	});
 
 	context.subscriptions.push(disposable);
 }
 
+function getWorkspaceFiles(file_re) {
+	// limitation: only the first workspaceFolder?
+	let toParse = [];
+	let searchRoot = workspace.workspaceFolders[0].uri.fsPath;
+	let dirs = [searchRoot];
+	while (dirs.length > 0) {
+		let cur = dirs.pop();
+		let contents = fs.readdirSync(cur, {withFileTypes: true});
+		for (let i = 0; i < contents.length; i++) {
+			if (contents[i].isDirectory()) {
+				dirs.push(cur + "\\" + contents[i].name);
+			} else if (contents[i].isFile() && contents[i].name.search(file_re) != -1) {
+				toParse.push(cur + "\\" + contents[i].name);
+			}
+		}
+	}
+
+	return toParse;
+}
 /*
   Un-abstractify a struct.
 
@@ -121,67 +158,134 @@ struct TransmissionPacket
 };
 
 */
-function destructify_external (symbolicName) {
-	return destructify_internal(symbolicName);
+function destructify_external (symbolicName, remainder) {
+	let asRoot = get_root_symbol(symbolicName);
+	let stack;
+	if (asRoot != symbolicName) {
+		stack = [asRoot];
+	} else {
+		stack = [asRoot, symbolicName];
+	}
+	return destructify_internal(symbolicName, stack, remainder, true);
 }
 
-function destructify_internal (symbolicName) {
-	let sym;
-	let isPtr = false;
-	let ds = "|\n";
-	if (typedef_struct_map.has(symbolicName))
-	{
-		sym = typedef_struct_map.get(symbolicName);
-		if (sym[0] == "*")
-		{
-			isPtr = true;
-			sym = sym.slice(1);
-		}
-	}
-	else
-	{
-		sym = symbolicName;
+function destructify_internal (symbolicName, stack, remainder, firstCall=false) {
+	let ds = "|";
+	let symObj = get_root_symbol(symbolicName);
+	let sym = symObj.sym;
+	let isPtr = symObj.isPointer;
+
+	if (stack.includes(sym) && !firstCall) {
+		return sym;
+	} else {
+		stack.push(sym);
+		stack.push(symbolicName);
 	}
 
 	if (!struct_source_map.has(sym)) {
-		console.log("Could not find " + sym + " in struct_source_map.");
+		console.error("Could not find " + sym + " in struct_source_map.");
 		return sym;
 	}
 
 	let fp = struct_source_map.get(sym);
 	let fps = fp.split("|+|");
 	let uri = fps[0];
-	let pos = fps[1];
-	pos += 1; // pos will be the position of the opening bracket following the symbolicName
+	let pos = parseInt(fps[1], 10);
+
 	try {
 		const file_text = fs.readFileSync(uri, 'utf8');
+		let block = block_as_string(pos, file_text, false);
+		let k = 0;
+		let line = "";
 
-		while (file_text[pos] != "}")
+		for (let m = 0; m < block.length; m++)
 		{
-			let line = "";
-			while (file_text[pos] != ";") {
-				line += file_text[pos++];
-			}
-			line += ";";
-			
-			let splitSpace = line.split(" ");
-			for (let i = 0; i < splitSpace.length; i++) {
-				if (struct_source_map.has(splitSpace[i])) {
-					line.replace(splitSpace[i], destructify_internal(splitSpace[i]));
+			line += block[m];
+			if (block[m] == ";")
+			{
+				let splitSpace = line.split(" ");
+				let line_rep = line;
+				for (let i = 0; i < splitSpace.length; i++) {
+					let symClean = splitSpace[i];
+					let symSearch;
+					if (symClean.charAt(symClean.length - 1) == '*')
+					{
+						symSearch = symClean.slice(0, -1);
+					}
+					else
+					{
+						symSearch = symClean;
+					}
+					let symRootObj = get_root_symbol(symSearch);
+					let symRoot = symRootObj.sym;
+					if (stack.includes(symRoot)) {
+						line_rep = replace_pretty(symSearch, symRoot, line);
+						continue;
+					}
+					if (struct_source_map.has(symRoot) && symRoot.isPtr) {
+						line_rep = replace_pretty(symSearch, destructify_internal(symRoot, stack, line.slice(line.search(symSearch) + symSearch.length, line.length), false), " * " + line);
+					} else if (struct_source_map.has(symRoot))
+					{
+						line_rep = replace_pretty(symSearch, destructify_internal(symRoot, stack, line.slice(line.search(symSearch) + symSearch.length, line.length), false), line);
+					}
 				}
+
+				ds += line_rep;
+				line = "";
 			}
-
-			ds += line + "\n";
-
-			while (file_text[pos] == " ")
-				pos++;
 		}
 	  } catch (err) {
 		console.error(err);
 	}
-	ds += "|\n";
-	ds += "| " + symbolicName + "\n";
+	ds += "\n|\n";
+	if (isPtr)
+		ds += "| *";
+	else
+		ds += "| " + remainder;
 	return ds;
+}
+
+function get_root_symbol(symbol) {
+	let symRoot = symbol;
+	let isPtr = false;
+	while (typedef_struct_map.has(symRoot)) {
+		symRoot = typedef_struct_map.get(symRoot);
+		if (symRoot[0] == "*")
+		{
+			isPtr = true;
+			symRoot = symRoot.slice(1);
+		}
+	}
+	return { sym: symRoot, isPointer : isPtr };
+}
+
+function replace_pretty(symbol, replace_d, line)
+{
+	let ofs;
+	let line_rep;
+	if (line.search("struct") != -1)
+	{
+		line_rep = line.split("struct").join("");
+	}
+	else
+	{
+		line_rep = line;
+	}
+	
+	ofs = line_rep.search(symbol);
+	ofs -= 3; // newline
+	if (ofs < 0)
+	{
+		ofs = 0;
+	}
+	let lines = replace_d.split("\n");
+	let symSplit = line_rep.split(symbol);
+	let str_build = symSplit[0] + lines[0];
+	for (let k = 1; k < lines.length; k++) {
+		console.log(ofs);
+		str_build += "\n" + " ".repeat(ofs) + lines[k];
+	}
+	return str_build;
 }
 
 
@@ -196,14 +300,14 @@ function parse_source_file(uri) {
 		// we assume utf8 here based on anecdotal ubiquity
 		const file_text = fs.readFileSync(uri, 'utf8');
 
-		process_structs(file_text);
+		process_structs(file_text, uri);
 	  } catch (err) {
 		console.error(err);
 	}
 }
 
 /*
-    Pull the defined structs in string "file_text" info an in memory data store.
+    Pull the defined structs in string "file_text" into an in memory data store.
 
 	This is complex and untenable in generality, we're only handling two common cases
 	below.
@@ -226,18 +330,18 @@ function parse_source_file(uri) {
 	C++ styles.
 
 	TODO: implement indifferentiable (find, without fail, all struct definitions and
-		report in machinify results that a type *is* a struct but could not be parsed to
-		avoid supplying the bad implicit presumption that the inability to find a struct
-		definition implies it is not a struct but some other user defined type)
+		  report in machinify results that a type *is* a struct but could not be parsed to
+		  avoid supplying the bad implicit presumption that the inability to find a struct
+		  definition implies it is not a struct but some other user defined type)
 
-	
+
 	Limitations:
 
 	multi line definitions:
 
 	    struct _____
 	    {
-	
+
 	    typedef struct _____
 	                 _____;
 */
@@ -245,7 +349,7 @@ function process_structs(file_text, uri) {
 	/*
 		"Typical" multline line struct definitions with or without aliases
 	*/
-	let struct_defs = file_text.match(/.*struct\s+((\w|_)+)\s+(?::\s+((\w|_)+)\s+)?\{/g);
+	let struct_defs = file_text.match(/.*struct\s+((\w|_)+)\s+(?::\s+(((\w|_)+)\s+)+)?\{/g);
 	let len;
 	if (struct_defs == null)
 		len = 0;
@@ -255,7 +359,7 @@ function process_structs(file_text, uri) {
 		let splitSpace = struct_defs[i].split(" ");
 		let symbolicName;
 		if (':' in splitSpace)
-			symbolicName = splitSpace[splitSpace.length - 3];
+			symbolicName = splitSpace[splitSpace.findIndex(":") - 1];
 		else
 			symbolicName = splitSpace[splitSpace.length - 2];
 		
@@ -263,11 +367,14 @@ function process_structs(file_text, uri) {
 		while (file_text[k] != "{")
 			k++;
 
-		struct_source_map.set(symbolicName, uri + "|+|" + k);
+		// fuzzy matching, assume we're going to suck in something we don't want
+		if (symbolicName.match(/[\w_0-9]+/ ) != null && symbolicName != "struct")
+			struct_source_map.set(symbolicName, uri + "|+|" + k);
 
 		if (struct_defs[i].search('typedef ') != -1)
 		{
-			process_typedef(as_typedef_statement(struct_defs[i], file_text), symbolicName, true);
+			let pos = file_text.search(struct_defs[i]) + struct_defs[i].search("{");
+			process_typedef(block_as_string(pos, file_text), symbolicName, true);
 		}
 	}
 
@@ -298,28 +405,40 @@ function process_structs(file_text, uri) {
 
 		process_typedef(struct_aliasing[i], symbolicName, false);
 	}
-	//console.log(struct_defs);
 }
 
 
-function as_typedef_statement(match, file_text)
+/*
+  Takes the position of an opening bracket in a uri and returns a string comprised of
+  all characters between that opening bracket and the corresponding closing bracket
+*/
+function block_as_string(pos, file_text, retain_brackets=true, remove_comments=true)
 {
-	let i = file_text.search(match);
+	let i = pos;
 	let j = 0;
-	var o_br = false;
 	var c_br = false;
 	let as_str = "";
+	if (!retain_brackets) {
+		while (file_text[i] == "{" || file_text[i] == "\n" || file_text[i] == " ")
+		{
+			i++;
+		}
+	}
 	while (1)
 	{
-		if (file_text[i] == ';' && !o_br)
-		{
-			break;
+		if (file_text[i] == '/' && file_text[i + 1] == '/') {
+			while (file_text[i] != '\n') {
+				i++;
+			}
+			i++;
 		}
-		if (file_text[i] == '{' && !o_br)
-		{
-			o_br = true;
+		if (file_text[i] == '/' && file_text[i + 1] == '*') {
+			while (!(file_text[i] == '*' && file_text[i + 1] == '/')) {
+				i++;
+			}
+			i += 2;
 		}
-		else if (file_text[i] == '{' && o_br)
+		if (file_text[i] == '{')
 		{
 			j++;
 		}
@@ -330,8 +449,11 @@ function as_typedef_statement(match, file_text)
 		if (file_text[i] == '}' && j == 0)
 		{
 			c_br = true;
+			if (!retain_brackets) {
+				break;
+			}
 		}
-		if (file_text[i] == ';' && (o_br && c_br))
+		if (file_text[i] == ';' && (c_br))
 		{
 			as_str += ';';
 			break;
@@ -393,6 +515,7 @@ function process_typedef(statement, symbolic_name, multiline) {
 	}
 }
 
+
 function process_singleline_typedef(statement, symbolic_name)
 {
 	let splitSpace = statement.split(" ").slice(2);
@@ -413,14 +536,12 @@ function process_singleline_typedef(statement, symbolic_name)
 			}
 		}
 		if (splitSpace2[j].search(/\w+(,|;)/g) != -1) {
-			typedef_struct_map.set(splitSpace2[j].split(1), symbolic_name);
+			typedef_struct_map.set(splitSpace2[j].slice(0, splitSpace2[j].length - 1), symbolic_name);
 		}
 	}
 }
 
-/*
 
-*/
 function process_mutliline_typedef(statement, symbolic_name)
 {
 	let aliases = [];
@@ -457,7 +578,9 @@ function process_mutliline_typedef(statement, symbolic_name)
 }
 
 // This method is called when your extension is deactivated
-function deactivate() {}
+function deactivate() {
+	
+}
 
 module.exports = {
 	activate,

@@ -2,7 +2,7 @@
 // Import the module and reference it with the alias vscode in your code below
 const vscode = require('vscode');
 const fs = require('fs');
-const { symbolName } = require('typescript');
+// const { symbolName } = require('typescript');
 const { get } = require('http');
 const { workerData } = require('worker_threads');
 const { workspace } = require('vscode');

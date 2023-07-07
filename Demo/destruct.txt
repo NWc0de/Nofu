@@ -1,0 +1,25 @@
+TransmissionPacket destructed
+
+|
+     |
+         |
+             EventChain
+            char* buf;
+            int len;
+            EventType type;
+        |
+        | * chain;
+        int len;
+        TransmissionClass tClass;
+    |
+    |  protobufArray;
+    MAC_Type macType;
+    char* macBug;
+    |
+       char* buf;
+       int len;
+       OriginId oId;
+   |
+   |  header;
+|
+| 

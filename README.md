@@ -1,13 +1,14 @@
 # nofu README
 
-This is a WIP related to a personal project - https://medium.com/@nwcodex/abstraction-less-is-more-c70ae42fbafe.
+WIP
+
+See https://medium.com/@nwcodex/abstraction-less-is-more-c70ae42fbafe for the theory behind this tool.
 
 TODO - 
 
 1. Improve struct definition identification (dentification is currenty limited to a few specific constructs associated with struct type definitions)
-2. Add support for enum definitions
+2. Add support for enums
 3. Add support for classes
-4. Explore the idea of applying geometric visual analysis to the output
 
 
 What it does:

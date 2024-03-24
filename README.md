@@ -1,21 +1,23 @@
 # nofu README
 
-This is a WIP related to a personal project - https://medium.com/@nwcodex/ingesting-machine-language-9847156fe0fc.
+This is a WIP related to a personal project - https://medium.com/@nwcodex/abstraction-less-is-more-c70ae42fbafe.
 
 TODO - 
 
-1. Solve the problem of struct definition identification (right now identification is limited to a few structured type definitions)
-2. Add support for enum definiti`on
+1. Improve struct definition identification (dentification is currenty limited to a few specific constructs associated with struct type definitions)
+2. Add support for enum definitions
+3. Add support for classes
+4. Explore the idea of applying geometric visual analysis to the output
 
 
 What it does:
 
-Lintsc|cc|h|cpp files in a repository, aggregates a lookup table of user defined struct type definitions and their syntactic incarnation, and, through a drop down menu item exposes a means of removed nested layers of definitions in structs for visual impact.
+Lintsc|cc|h|cpp files in a Git repository, generates a lookup table of user defined struct type definitions and their syntactic incarnation, and, through a drop down menu item exposes a means of removed nested layers of definitions in structs for visual analysis
 
 
 The current state:
 
-I wouldn't call this a beta. It's barely PoC material, and will be buggy if you try it out. It will be hard to use without familiarity with the bugs. In other words, it probably won't be useful until I've worked on it further.
+I would call this project an alpha state. It needs some firming up before it's ready for battle tested use. It's primary function is to illustrate my theory in https://medium.com/@nwcodex/abstraction-less-is-more-c70ae42fbafe. at the moment (:
 
 
 The license:

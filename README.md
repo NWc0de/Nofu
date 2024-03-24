@@ -4,7 +4,7 @@ WIP
 
 See https://medium.com/@nwcodex/abstraction-less-is-more-c70ae42fbafe for the theory behind this tool.
 
-TODO - 
+TODO
 
 1. Improve struct definition identification (dentification is currenty limited to a few specific constructs associated with struct type definitions)
 2. Add support for enums
